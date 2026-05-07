@@ -1,0 +1,57 @@
+# =============================================================
+# Corrective RAG Project — Dependencies
+# =============================================================
+# Install with: pip install -r requirements.txt
+# =============================================================
+
+# --- Core Framework ---
+# LangChain: orchestration framework for LLM-powered applications
+# Why LangChain? Provides abstractions for chains, retrievers, prompts.
+# Industry standard — interviewers expect you to know it.
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+
+# --- Google Gemini Integration ---
+# Official LangChain integration for Google's Gemini models
+# Gives us both embeddings (gemini-embedding-001) and generation (gemini-2.0-flash)
+langchain-google-genai>=2.0.0
+
+# --- Vector Database ---
+# ChromaDB: lightweight, local vector database
+# Why ChromaDB? Zero cost, no server needed, Python-native.
+# Perfect for prototyping. In production you might use Qdrant or Pinecone.
+chromadb>=0.5.0
+langchain-chroma>=0.1.0
+
+# --- Data Ingestion ---
+# newspaper3k: extracts article text from URLs automatically
+# Why newspaper3k? Handles HTML parsing, boilerplate removal, and text extraction
+# in one call. No need to write custom scrapers.
+newspaper3k>=0.2.8
+
+# --- Reranking (Stage 5) ---
+# FlagEmbedding: BAAI's BGE reranker models
+# Why BGE? State-of-the-art open-source cross-encoder reranker.
+# Runs locally on your GPU — no API costs.
+FlagEmbedding>=1.2.0
+
+# --- API Layer ---
+# FastAPI: modern async web framework with auto-generated docs
+# Why FastAPI? Async support, Pydantic validation, Swagger UI built-in.
+fastapi>=0.110.0
+uvicorn>=0.30.0
+
+# --- Frontend ---
+streamlit>=1.35.0
+
+# --- Utilities ---
+python-dotenv>=1.0.0     # Load .env files
+tiktoken>=0.7.0          # Token counting (for chunk size control)
+requests>=2.31.0         # HTTP requests
+tqdm>=4.66.0             # Progress bars
+
+# --- Evaluation (Stage 7) ---
+ragas>=0.2.0
+datasets>=2.19.0

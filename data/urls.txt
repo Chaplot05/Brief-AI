@@ -1,0 +1,50 @@
+# =============================================================
+# Indian Startup Ecosystem — Article URLs for Knowledge Base
+# =============================================================
+# Lines starting with # are comments and will be skipped.
+# Add one URL per line.
+#
+# SOURCES:
+# - YourStory, Inc42, Economic Times, TechCrunch, Moneycontrol
+# - Focus on funding, founders, ecosystem trends, unicorns
+# =============================================================
+
+# --- Unicorn & Funding Stories ---
+https://yourstory.com/2024/01/indian-startup-ecosystem-2023-year-review
+https://yourstory.com/2024/03/top-funded-indian-startups-2024
+https://yourstory.com/2023/12/zerodha-profitability-bootstrapped-startup
+https://yourstory.com/2024/02/razorpay-fintech-growth-india
+https://yourstory.com/2024/01/meesho-social-commerce-growth-story
+https://inc42.com/buzz/indian-startup-funding-report-2024/
+https://inc42.com/features/the-rise-of-indias-saas-ecosystem/
+https://inc42.com/buzz/top-indian-unicorns-2024/
+https://inc42.com/features/bootstrapped-startups-india/
+https://inc42.com/buzz/ai-startups-india-2024/
+
+# --- Fintech ---
+https://yourstory.com/2024/01/phonepe-upi-market-share-growth
+https://yourstory.com/2024/02/cred-fintech-unicorn-story
+https://yourstory.com/2023/11/groww-investment-platform-journey
+https://economictimes.indiatimes.com/tech/startups/paytm-crisis-what-happened
+https://inc42.com/features/digital-payments-india-2024/
+
+# --- E-commerce & D2C ---
+https://yourstory.com/2024/01/flipkart-walmart-ecommerce-india
+https://yourstory.com/2024/03/nykaa-beauty-tech-growth
+https://yourstory.com/2023/12/boat-electronics-d2c-brand-story
+https://inc42.com/features/d2c-brands-india-2024/
+https://yourstory.com/2024/02/mamaearth-honasa-ipo-journey
+
+# --- AI & Deep Tech ---
+https://yourstory.com/2024/03/indian-ai-startups-global-impact
+https://inc42.com/features/ai-startups-india-generative-ai/
+https://yourstory.com/2024/01/krutrim-ai-bhavish-aggarwal
+https://yourstory.com/2024/02/sarvam-ai-indian-languages
+https://inc42.com/buzz/deeptech-startups-india-2024/
+
+# --- Ecosystem & Policy ---
+https://yourstory.com/2024/01/startup-india-policy-impact
+https://inc42.com/buzz/indian-startup-ecosystem-report-2024/
+https://yourstory.com/2024/03/women-founders-india-startups
+https://yourstory.com/2024/02/iit-startup-founders-india
+https://inc42.com/features/startup-layoffs-india-2024/
