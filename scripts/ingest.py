@@ -7,12 +7,13 @@ USAGE:
     python scripts/ingest.py
 
 WHAT IT DOES:
-    1. Scrapes articles from data/urls.txt
-    2. Chunks the article text
-    3. Embeds chunks and stores in ChromaDB
+    1. Loads scraped articles from data/raw/
+    2. Chunks the article text (400 tokens, 50 overlap)
+    3. Embeds chunks via Gemini API and stores in Qdrant
 
 RUN THIS ONCE to build your knowledge base.
 After that, you can query without re-running ingestion.
+Safe to re-run — uses upsert so no duplicates are created.
 =============================================================
 """
 
@@ -47,17 +48,18 @@ def main():
     chunks = chunk_articles(articles)
 
     # ── Step 3: Embed & Store ───────────────────────────────
-    print("\n🔢 STEP 3: Embedding and storing in ChromaDB...")
+    print("\n🔢 STEP 3: Embedding and storing in Qdrant...")
     embed_and_store(chunks)
 
     # ── Summary ─────────────────────────────────────────────
     stats = get_collection_stats()
     print("\n" + "=" * 60)
     print("✅ INGESTION COMPLETE!")
-    print(f"   Articles scraped:  {len(articles)}")
+    print(f"   Articles loaded:   {len(articles)}")
     print(f"   Chunks created:    {len(chunks)}")
     print(f"   Vectors stored:    {stats['document_count']}")
-    print(f"   ChromaDB location: {stats['persist_dir']}")
+    print(f"   Qdrant location:   {stats['persist_dir']}")
+    print(f"   Status:            {stats.get('status', 'ok')}")
     print("=" * 60)
     print("\n💡 You can now query the RAG system!")
     print("   Run: python -c \"from src.pipeline.rag_pipeline import query_rag; print(query_rag('What are the top Indian unicorns?')['answer'])\"")

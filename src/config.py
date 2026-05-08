@@ -61,20 +61,63 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/gemini-embedding-001")
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-2.0-flash")
 
-# ── ChromaDB Settings ──────────────────────────────────────
-# ChromaDB stores our vectors locally on disk.
+# ── Embedding Dimensions ──────────────────────────────────
+# WHY DO WE NEED THIS?
+#   ChromaDB inferred the vector size automatically when you first
+#   inserted data. Qdrant is more explicit — you MUST declare the
+#   vector size when creating a collection.
 #
-# WHY CHROMADB?
-# - Runs locally, no server needed, zero cost
-# - Persist to disk so vectors survive restarts
-# - Good enough for up to ~1M documents
-# - Alternative: Pinecone (cloud, costs money), Qdrant (heavier setup)
+# WHY 3072?
+#   Google's gemini-embedding-001 outputs 3072-dimensional vectors.
+#   Common embedding sizes across providers:
+#   - OpenAI text-embedding-3-large: 3072 dims
+#   - OpenAI text-embedding-3-small: 1536 dims
+#   - Google gemini-embedding-001: 3072 dims (our model)
+#   - Sentence Transformers all-MiniLM-L6-v2: 384 dims
+#
+#   More dimensions = more semantic nuance captured, but also
+#   more storage space and slightly slower search. 3072 is what
+#   Google's latest embedding model produces.
+#
+# NOTE: If you switch embedding models, you MUST update this value
+#   AND re-embed all your chunks. Vectors from different models
+#   live in incompatible vector spaces.
+EMBEDDING_DIMENSIONS = 3072
+
+# ── Qdrant Vector Database Settings ───────────────────────
+# WHY QDRANT INSTEAD OF CHROMADB?
+#   We migrated from ChromaDB to Qdrant for several reasons:
+#
+#   1. ARCHITECTURE: ChromaDB is embedded (runs inside your Python
+#      process using SQLite). Qdrant is client-server architecture.
+#      This matters because in Docker (Stage 9), each service runs
+#      in its own container. Qdrant naturally runs as a separate
+#      container. ChromaDB doesn't have a good server story.
+#
+#   2. FILTERING: Qdrant has "payload indexing" — it can create
+#      indexes on metadata fields (like startup name, year) for
+#      fast filtered search. ChromaDB's filtering is basic.
+#
+#   3. PRODUCTION-GRADE: Companies like Microsoft, Disney, and
+#      JetBrains use Qdrant in production. ChromaDB is mostly
+#      used for prototyping and tutorials.
+#
+#   4. LOCAL MODE: Despite being a server DB, Qdrant supports
+#      `QdrantClient(path="./qdrant_db")` which saves to disk
+#      locally — no Docker needed for development. Best of both worlds.
 #
 # WHAT IS A "COLLECTION"?
-# - Think of it like a table in SQL, but for vectors
-# - Each collection stores vectors + metadata + original text
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
-CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "indian_startups")
+#   - Same concept as ChromaDB: like a table in SQL, but for vectors
+#   - Each collection stores vectors + payload (metadata + text)
+#   - You can have multiple collections (e.g., "indian_startups",
+#     "research_papers") in one Qdrant instance
+#
+# QDRANT_PATH vs QDRANT_URL:
+#   - QDRANT_PATH="./qdrant_db" → local mode (for development)
+#   - QDRANT_URL="http://qdrant:6333" → server mode (for Docker/production)
+#   - We'll switch to URL mode in Stage 9 when we containerize
+QDRANT_PATH = os.getenv("QDRANT_PATH", "./qdrant_db")
+QDRANT_COLLECTION_NAME = os.getenv("QDRANT_COLLECTION_NAME", "indian_startups")
 
 # ── Chunking Settings ──────────────────────────────────────
 # CHUNK_SIZE: How many tokens per chunk

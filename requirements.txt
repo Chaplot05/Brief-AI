@@ -19,11 +19,14 @@ langchain-text-splitters>=0.3.0
 langchain-google-genai>=2.0.0
 
 # --- Vector Database ---
-# ChromaDB: lightweight, local vector database
-# Why ChromaDB? Zero cost, no server needed, Python-native.
-# Perfect for prototyping. In production you might use Qdrant or Pinecone.
-chromadb>=0.5.0
-langchain-chroma>=0.1.0
+# Qdrant: production-grade vector database
+# WHY QDRANT (not ChromaDB)?
+#   - Client-server architecture → maps to Docker containers naturally
+#   - Payload indexing → enables filtered vector search
+#   - Used by Microsoft, Disney, JetBrains in production
+#   - Local mode for dev, server mode for Docker — same API
+#   - More impressive on a resume than ChromaDB
+qdrant-client>=1.9.0
 
 # --- Data Ingestion ---
 # newspaper3k: extracts article text from URLs automatically
