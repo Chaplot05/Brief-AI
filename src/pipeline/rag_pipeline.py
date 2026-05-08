@@ -55,6 +55,7 @@ INTERVIEW QUESTION:
 import time
 from src.retrieval.basic_retriever import retrieve, format_context
 from src.retrieval.multi_query_retriever import multi_query_retrieve
+from src.retrieval.hyde_retriever import hyde_retrieve
 from src.generation.generator import generate_answer
 
 
@@ -81,6 +82,11 @@ def query_rag(
             Generate 3 query variants → 4 retrievals → merge.
             Better recall, catches more relevant documents.
             Best for: complex questions, unfamiliar phrasing.
+
+        "hyde" (Stage 4):
+            Generate hypothetical answer → embed answer → search.
+            Better precision for document-style matching.
+            Best for: when question uses different vocab than docs.
 
     STAGE 2 FILTERS (passed through):
         source_type: "wikipedia", "yourstory", etc.
@@ -127,6 +133,15 @@ def query_rag(
         chunks = multi_query_retrieve(
             question,
             num_queries=3,
+            top_k=top_k,
+            source_type=source_type,
+            company_name=company_name,
+            verbose=verbose,
+        )
+    elif retrieval_method == "hyde":
+        # Stage 4: HyDE retrieval
+        chunks = hyde_retrieve(
+            question,
             top_k=top_k,
             source_type=source_type,
             company_name=company_name,
