@@ -300,27 +300,31 @@ def embed_and_store(chunks: list[dict], batch_size: int = 20) -> None:
 
         # Build Qdrant PointStruct objects
         # Each point = one chunk with its vector and all metadata
-        points = [
-            PointStruct(
-                id=_chunk_id_to_uuid(chunk["id"]),
-                vector=embedding,
-                payload={
-                    # Store the original text so we can return it in search results
-                    "text": chunk["text"],
-                    # Store the original chunk ID for debugging/reference
-                    "chunk_id": chunk["id"],
-                    # Flatten metadata into payload for easy access
-                    # In Qdrant, payload fields can be indexed for filtered search
-                    "article_id": chunk["metadata"]["article_id"],
-                    "title": chunk["metadata"]["title"],
-                    "url": chunk["metadata"]["url"],
-                    "chunk_index": chunk["metadata"]["chunk_index"],
-                    "total_chunks": chunk["metadata"]["total_chunks"],
-                    "token_count": chunk["metadata"]["token_count"],
-                },
+        points = []
+        for chunk, embedding in zip(batch, embeddings):
+            # Build payload from chunk metadata
+            # We flatten ALL metadata fields into the payload so they're
+            # searchable and filterable in Qdrant.
+            #
+            # Stage 2 NEW FIELDS:
+            #   - source_type: "wikipedia", "yourstory", etc. (for filtered search)
+            #   - company_name: "Zerodha", "Flipkart", etc. (for filtered search)
+            payload = {
+                "text": chunk["text"],
+                "chunk_id": chunk["id"],
+            }
+            # Merge all metadata fields into payload
+            # This way, any new metadata added in future stages
+            # automatically gets stored — no need to edit this code
+            payload.update(chunk["metadata"])
+
+            points.append(
+                PointStruct(
+                    id=_chunk_id_to_uuid(chunk["id"]),
+                    vector=embedding,
+                    payload=payload,
+                )
             )
-            for chunk, embedding in zip(batch, embeddings)
-        ]
 
         # Upsert into Qdrant
         # "upsert" = update if ID exists, insert if new

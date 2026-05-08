@@ -1,66 +1,121 @@
 """
 =============================================================
-CHUNKER.PY — Text Chunking with Overlap
+CHUNKER.PY — Stage 2: RecursiveCharacterTextSplitter
 =============================================================
 
-WHAT THIS DOES:
-    Takes full article text and splits it into smaller "chunks"
-    that can be embedded and retrieved independently.
+WHAT CHANGED FROM STAGE 1:
+    Stage 1 used a SIMPLE sentence-based splitter:
+        text.split(". ")  →  join sentences until 400 tokens
 
-WHY WE NEED CHUNKING:
-    1. Embedding models have input limits (~8K tokens for Gemini)
-    2. LLMs have context window limits
-    3. MOST IMPORTANTLY: smaller chunks = more precise retrieval
+    Stage 2 upgrades to LangChain's RecursiveCharacterTextSplitter:
+        Try splitting at: \\n\\n → \\n → . → " " → ""
+        This preserves document STRUCTURE, not just sentences.
 
-    Imagine asking "Who founded Zerodha?"
-    - A 5000-token article about Zerodha covers founding, revenue,
-      products, team, office, competition...
-    - A 400-token chunk about Zerodha's founding contains EXACTLY
-      the answer with minimal noise
-    - The LLM gets a focused context → better answer
+WHY THIS MATTERS — THE CORE PROBLEM WITH STAGE 1:
 
-WHY 400 TOKENS (not 200 or 1000)?
-    - 200 tokens: too small, loses context (a paragraph about funding
-      might be split across 3 chunks, each incomplete)
-    - 400 tokens: sweet spot — ~1-2 paragraphs, enough context to
-      be self-contained, small enough for precise retrieval
-    - 1000 tokens: too large, retrieval returns "approximately relevant"
-      chunks with lots of noise
-    - Industry standard: 200-500 tokens for most RAG systems
+    Stage 1's splitter had a critical flaw:
+        text.replace("\\n", " ").split(". ")
 
-WHY OVERLAP?
-    Consider this text split at position 400:
-      Chunk 1: "...Zerodha was founded in"
-      Chunk 2: "2010 by Nithin Kamath..."
+    This DESTROYS ALL paragraph and section structure:
+    - Wikipedia articles have headers: "== History =="
+    - Paragraphs are separated by \\n\\n
+    - Our Stage 1 splitter collapsed everything into one long string
+    - Then blindly split on periods
 
-    Without overlap, the founding fact is SPLIT between two chunks.
-    Neither chunk contains the complete information.
+    Example of what went wrong:
+        Original text:
+            == History ==
+            Zerodha was founded in 2010 by Nithin Kamath.
 
-    With 50-token overlap:
-      Chunk 1: "...Zerodha was founded in 2010 by Nithin Kamath..."
-      Chunk 2: "...was founded in 2010 by Nithin Kamath. The company..."
+            == Products ==
+            Zerodha offers Kite, a trading platform.
 
-    Both chunks now contain the complete sentence.
-    50 tokens ≈ 2-3 sentences of overlap — enough to preserve context.
+        Stage 1 output (BAD):
+            Chunk: "== History == Zerodha was founded in 2010 by Nithin Kamath."
+            → The section header is GLUED to the text. No structure preserved.
+
+        Stage 2 output (GOOD):
+            Chunk: "History\\nZerodha was founded in 2010 by Nithin Kamath."
+            → Paragraph boundaries preserved. Context is cleaner.
+
+WHAT IS RecursiveCharacterTextSplitter?
+
+    It's LangChain's smartest text splitter. The "recursive" means it
+    tries MULTIPLE separators in order of preference:
+
+    1. First try: split on "\\n\\n" (paragraph boundaries)
+       → Keeps entire paragraphs together. Best quality chunks.
+       → But if a paragraph is > 400 tokens, it won't fit.
+
+    2. Fallback: split on "\\n" (line breaks)
+       → Keeps lines together. Still decent structure.
+
+    3. Fallback: split on ". " (sentence boundaries)
+       → Same as our Stage 1 approach. Sentences stay whole.
+
+    4. Last resort: split on " " (word boundaries)
+       → Never splits mid-word. Guaranteed coherent text.
+
+    This hierarchy means:
+    - SHORT paragraphs → stay together as one chunk
+    - LONG paragraphs → split at sentence boundaries
+    - VERY long sentences → split at word boundaries
+
+    WHY IS THIS BETTER?
+    Because paragraph = one idea. Keeping paragraphs intact means
+    each chunk contains ONE complete thought, not fragments of two.
+
+WHY from_tiktoken_encoder() ?
+
+    RecursiveCharacterTextSplitter normally counts CHARACTERS.
+    But LLMs think in TOKENS. 400 characters ≠ 400 tokens.
+
+    from_tiktoken_encoder() makes it count TOKENS instead:
+    - chunk_size=400 means 400 TOKENS (not characters)
+    - This matches our Stage 1 behavior
+    - More accurate for LLM context window budgeting
+
+    TRADEOFF: Token counting is ~10x slower than character counting.
+    But with 27 articles, this takes seconds either way. In production
+    with millions of documents, you might use character counting for
+    speed and accept the slight inaccuracy.
+
+WHAT ELSE IS NEW IN STAGE 2:
+
+    1. METADATA ENRICHMENT:
+       - Added "source_type" field (wikipedia, yourstory, etc.)
+       - Extracted company/topic names from titles
+       - These enable FILTERED search in Qdrant
+
+    2. CHUNK QUALITY METRICS:
+       - Track min/max/avg/median chunk sizes
+       - This helps diagnose chunking issues
 
 INTERVIEW QUESTION:
-    "How did you decide on chunk size?"
-    → "I experimented with 200, 400, and 600 token chunks. 400 gave
-       the best retrieval precision because chunks were self-contained
-       but focused. I used 50-token overlap to prevent information
-       loss at boundaries."
+    "How did you improve your chunking strategy?"
+    → "I started with simple sentence splitting and upgraded to
+       LangChain's RecursiveCharacterTextSplitter. It tries paragraph
+       boundaries first, then sentences, then words. This keeps
+       semantic structure intact — paragraphs about one topic stay
+       in one chunk instead of being fragmented across multiple chunks.
+       I also enriched metadata with source types for filtered search."
 
-WHAT COMPANIES DO:
-    - Anthropic/OpenAI recommend 200-500 token chunks
-    - Some use "semantic chunking" (split at paragraph/section boundaries)
-    - Some use "recursive" chunking (try to split at \n\n, then \n, then space)
-    - We'll upgrade to recursive chunking in Stage 2
+    "What's the difference between character-based and token-based chunking?"
+    → "LLMs process tokens, not characters. 'Nithin Kamath' is 14
+       characters but 3-4 tokens. Using token-based chunking ensures
+       each chunk fits precisely in the model's context window. I use
+       tiktoken's cl100k_base encoding for accurate token counting."
 =============================================================
 """
 
 import tiktoken
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from src.config import CHUNK_SIZE, CHUNK_OVERLAP
 
+
+# ── Token Counter (kept from Stage 1) ──────────────────────
+# Still needed for metadata and quality metrics.
 
 def count_tokens(text: str, model: str = "cl100k_base") -> int:
     """
@@ -91,24 +146,72 @@ def count_tokens(text: str, model: str = "cl100k_base") -> int:
     return len(encoding.encode(text))
 
 
+# ── The Splitter — Stage 2's Main Upgrade ──────────────────
+
+def get_text_splitter(
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> RecursiveCharacterTextSplitter:
+    """
+    Create a RecursiveCharacterTextSplitter with token-based sizing.
+
+    WHY A FACTORY FUNCTION?
+        - Makes it easy to test different configurations
+        - In Stage 3 (multi-query), we might want different chunk sizes
+        - Factory pattern = create objects through a function, not directly
+
+    HOW from_tiktoken_encoder() WORKS:
+        Internally, it wraps the splitter so that:
+        1. chunk_size and chunk_overlap are in TOKENS (not characters)
+        2. When deciding where to split, it counts tokens using tiktoken
+        3. The separators list still defines WHERE to try splitting
+        4. But the SIZE constraints are in tokens
+
+    THE SEPARATOR HIERARCHY (most preferred → least preferred):
+        "\\n\\n" — Paragraph boundary (best: keeps paragraphs whole)
+        "\\n"   — Line break (good: keeps lines together)
+        ". "   — Sentence boundary (okay: keeps sentences whole)
+        " "    — Word boundary (fallback: never splits mid-word)
+        ""     — Character boundary (last resort: never actually used)
+
+    Args:
+        chunk_size: Maximum tokens per chunk (default: 400)
+        chunk_overlap: Overlap tokens between chunks (default: 50)
+
+    Returns:
+        Configured RecursiveCharacterTextSplitter instance
+    """
+    return RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="cl100k_base",   # Same tokenizer as count_tokens()
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ". ", " ", ""],
+        # strip_whitespace: removes leading/trailing whitespace from chunks
+        # Important because after splitting on \n\n, chunks may start with \n
+        strip_whitespace=True,
+        # is_separator_regex=False means separators are treated as literal strings
+        # Set to True if you want regex patterns (e.g., r"\n{2,}" for 2+ newlines)
+        is_separator_regex=False,
+    )
+
+
 def chunk_text(
     text: str,
     chunk_size: int = CHUNK_SIZE,
     chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[str]:
     """
-    Split text into overlapping chunks based on token count.
+    Split text into overlapping chunks using RecursiveCharacterTextSplitter.
 
-    ALGORITHM:
-        1. Split text into sentences (using period + space as delimiter)
-        2. Accumulate sentences until we reach chunk_size tokens
-        3. Save that chunk, then back up by chunk_overlap tokens
-        4. Continue from the overlap point
+    STAGE 1 vs STAGE 2 — WHAT CHANGED:
+        Stage 1:
+            text.replace("\\n", " ").split(". ")
+            → Destroyed all structure. Simple but lossy.
 
-    WHY SENTENCE-BASED SPLITTING?
-        - Splitting mid-sentence creates garbage chunks
-        - "Zerodha raised $" and "500M in Series B" are useless alone
-        - Sentence boundaries create coherent, meaningful chunks
+        Stage 2:
+            RecursiveCharacterTextSplitter(separators=[...])
+            → Preserves paragraph and section structure.
+            → Tries smart boundaries first, falls back gracefully.
 
     Args:
         text: The full text to chunk
@@ -121,99 +224,180 @@ def chunk_text(
     if not text or not text.strip():
         return []
 
-    # Split into sentences (simple but effective)
-    # In Stage 2, we'll use LangChain's RecursiveCharacterTextSplitter
-    # which tries \n\n → \n → ". " → " " in order
-    sentences = text.replace("\n", " ").split(". ")
-    sentences = [s.strip() + "." for s in sentences if s.strip()]
+    splitter = get_text_splitter(chunk_size, chunk_overlap)
 
-    chunks = []
-    current_chunk_sentences = []
-    current_token_count = 0
+    # split_text() applies the recursive splitting algorithm:
+    # 1. Try to split on \n\n (paragraphs)
+    # 2. If a paragraph > chunk_size tokens, split it on \n (lines)
+    # 3. If a line > chunk_size tokens, split on ". " (sentences)
+    # 4. If a sentence > chunk_size tokens, split on " " (words)
+    # Then it merges small consecutive pieces back together with overlap
+    chunks = splitter.split_text(text)
 
-    for sentence in sentences:
-        sentence_tokens = count_tokens(sentence)
-
-        # If adding this sentence would exceed chunk_size,
-        # save the current chunk and start a new one
-        if current_token_count + sentence_tokens > chunk_size and current_chunk_sentences:
-            # Save the completed chunk
-            chunk_text_str = " ".join(current_chunk_sentences)
-            chunks.append(chunk_text_str)
-
-            # OVERLAP: Keep some sentences from the end of this chunk
-            # to start the next chunk. This is the key overlap mechanism.
-            overlap_sentences = []
-            overlap_tokens = 0
-            for sent in reversed(current_chunk_sentences):
-                sent_tokens = count_tokens(sent)
-                if overlap_tokens + sent_tokens <= chunk_overlap:
-                    overlap_sentences.insert(0, sent)
-                    overlap_tokens += sent_tokens
-                else:
-                    break
-
-            current_chunk_sentences = overlap_sentences
-            current_token_count = overlap_tokens
-
-        current_chunk_sentences.append(sentence)
-        current_token_count += sentence_tokens
-
-    # Don't forget the last chunk!
-    if current_chunk_sentences:
-        chunk_text_str = " ".join(current_chunk_sentences)
-        if count_tokens(chunk_text_str) > 30:  # Skip tiny trailing chunks
-            chunks.append(chunk_text_str)
+    # Filter out tiny chunks (< 30 tokens) — they add noise without information
+    # This can happen with short paragraphs at the end of articles
+    chunks = [c for c in chunks if count_tokens(c) > 30]
 
     return chunks
 
 
+def _extract_source_type(url: str) -> str:
+    """
+    Determine the source type from the article URL.
+
+    WHY TRACK SOURCE TYPE?
+        In Qdrant, payload fields can be INDEXED and used for
+        FILTERED SEARCH. Example queries:
+        - "Find startup funding info, but ONLY from Wikipedia articles"
+        - "Search for product info, but ONLY from company websites"
+
+        This is a huge advantage over ChromaDB, which has limited
+        filtering capabilities. Qdrant can combine:
+        1. Vector similarity (semantic search)
+        2. Payload filters (metadata constraints)
+
+        This is called HYBRID FILTERING — you get the best of both
+        SQL (exact filters) and vector search (semantic similarity).
+
+    INTERVIEW QUESTION:
+        "How do you filter search results in your RAG system?"
+        → "Qdrant supports payload-based filtering alongside vector
+           search. I index metadata fields like source_type and
+           company_name, so I can run queries like 'find the top-5
+           semantically similar chunks, but only from Wikipedia sources'.
+           This reduces noise and improves retrieval precision."
+
+    Args:
+        url: Article URL
+
+    Returns:
+        Source type string (e.g., "wikipedia", "yourstory")
+    """
+    url_lower = url.lower()
+    if "wikipedia.org" in url_lower:
+        return "wikipedia"
+    elif "yourstory.com" in url_lower:
+        return "yourstory"
+    elif "inc42.com" in url_lower:
+        return "inc42"
+    elif "techcrunch.com" in url_lower:
+        return "techcrunch"
+    elif "economictimes" in url_lower:
+        return "economic_times"
+    else:
+        return "other"
+
+
+def _extract_company_name(title: str) -> str:
+    """
+    Extract a clean company/topic name from the article title.
+
+    Wikipedia titles often look like:
+        "Zerodha - Wikipedia"
+        "Flipkart"
+        "Unified Payments Interface"
+
+    We clean these up to use as filterable metadata.
+
+    Args:
+        title: Article title
+
+    Returns:
+        Cleaned company/topic name
+    """
+    # Remove common suffixes
+    name = title
+    for suffix in [" - Wikipedia", " – Wikipedia", " | Wikipedia"]:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+
+    # Remove "(company)" type suffixes for cleaner names
+    if name.endswith(")"):
+        paren_start = name.rfind("(")
+        if paren_start > 0:
+            name = name[:paren_start].strip()
+
+    return name.strip()
+
+
 def chunk_articles(articles: list[dict]) -> list[dict]:
     """
-    Chunk all articles and attach metadata to each chunk.
+    Chunk all articles and attach enriched metadata to each chunk.
 
-    WHY ATTACH METADATA?
-        - Each chunk needs to "remember" which article it came from
-        - This enables CITATIONS in the final answer
-        - Without metadata, you'd show the answer but couldn't say
-          "Source: YourStory article from 2024"
-        - Citations build user trust and are a MUST for production RAG
+    STAGE 2 IMPROVEMENTS:
+        1. Uses RecursiveCharacterTextSplitter (better boundaries)
+        2. Adds source_type metadata (for filtered search)
+        3. Adds company_name metadata (for filtered search)
+        4. Reports quality metrics (min/max/avg chunk size)
 
-    WHAT METADATA WE ATTACH:
-        - article_id: unique identifier
-        - title: article title (for display)
-        - url: source URL (for citation links)
-        - chunk_index: position within the article (for ordering)
+    WHY ENRICHED METADATA?
+        Stage 1 metadata: {title, url, article_id, chunk_index}
+        Stage 2 metadata: + {source_type, company_name, total_tokens}
+
+        The new fields enable Qdrant payload filtering:
+        - Filter by source: "only Wikipedia articles"
+        - Filter by company: "only Zerodha chunks"
+        - Filter by size: "only chunks > 100 tokens" (quality filter)
 
     Args:
         articles: List of article dicts from the scraper
 
     Returns:
-        List of chunk dicts with text + metadata
+        List of chunk dicts with text + enriched metadata
     """
     all_chunks = []
+    chunk_sizes = []  # Track sizes for quality metrics
 
     for article in articles:
         text = article.get("text", "")
         if not text:
             continue
 
+        url = article.get("url", "")
+        title = article.get("title", "Unknown")
+
+        # ── Stage 2 metadata enrichment ────────────────────
+        source_type = _extract_source_type(url)
+        company_name = _extract_company_name(title)
+
+        # ── Chunk with RecursiveCharacterTextSplitter ──────
         chunks = chunk_text(text)
 
         for i, chunk in enumerate(chunks):
+            token_count = count_tokens(chunk)
+            chunk_sizes.append(token_count)
+
             all_chunks.append({
                 "id": f"{article['id']}_chunk_{i}",
                 "text": chunk,
                 "metadata": {
+                    # ── Original metadata (Stage 1) ────────
                     "article_id": article["id"],
-                    "title": article.get("title", "Unknown"),
-                    "url": article.get("url", ""),
+                    "title": title,
+                    "url": url,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
-                    "token_count": count_tokens(chunk),
+                    "token_count": token_count,
+                    # ── New metadata (Stage 2) ─────────────
+                    "source_type": source_type,
+                    "company_name": company_name,
                 },
             })
 
-    print(f"📦 Created {len(all_chunks)} chunks from {len(articles)} articles")
-    print(f"   Average chunk size: {sum(c['metadata']['token_count'] for c in all_chunks) / max(len(all_chunks), 1):.0f} tokens")
+    # ── Quality Metrics ────────────────────────────────────
+    if chunk_sizes:
+        sorted_sizes = sorted(chunk_sizes)
+        median = sorted_sizes[len(sorted_sizes) // 2]
+        print(f"📦 Created {len(all_chunks)} chunks from {len(articles)} articles")
+        print(f"   Splitter:   RecursiveCharacterTextSplitter (Stage 2)")
+        print(f"   Avg size:   {sum(chunk_sizes) / len(chunk_sizes):.0f} tokens")
+        print(f"   Median:     {median} tokens")
+        print(f"   Range:      {min(chunk_sizes)} – {max(chunk_sizes)} tokens")
+        print(f"   Config:     chunk_size={CHUNK_SIZE}, overlap={CHUNK_OVERLAP}")
+    else:
+        print(f"⚠ No chunks created from {len(articles)} articles")
+
     return all_chunks
+"""
+
+"""

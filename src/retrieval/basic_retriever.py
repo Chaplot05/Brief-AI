@@ -65,6 +65,7 @@ INTERVIEW QUESTION:
 """
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from src.config import (
@@ -76,18 +77,39 @@ from src.config import (
 )
 
 
-def retrieve(query: str, top_k: int = TOP_K_RETRIEVAL) -> list[dict]:
+def retrieve(
+    query: str,
+    top_k: int = TOP_K_RETRIEVAL,
+    source_type: str | None = None,
+    company_name: str | None = None,
+) -> list[dict]:
     """
     Retrieve the most relevant chunks for a query.
 
+    STAGE 2 UPGRADE: FILTERED SEARCH
+        Now supports optional metadata filters:
+        - source_type: "wikipedia", "yourstory", etc.
+        - company_name: "Zerodha", "Flipkart", etc.
+
+        This combines VECTOR SEARCH (semantic similarity) with
+        METADATA FILTERING (exact constraints). Example:
+        - "Find chunks about funding" + source_type="wikipedia"
+        - Returns only Wikipedia chunks that are semantically
+          similar to "funding"
+
+        WHY IS THIS POWERFUL?
+        Without filters: query about Zerodha might return chunks
+        about Flipkart or Paytm that mention similar concepts.
+        With filters: constrain to only Zerodha articles → precise.
+
+        This is called HYBRID SEARCH (vector + filter) and it's
+        a key advantage of Qdrant over ChromaDB.
+
     THE RETRIEVAL PIPELINE:
         1. Embed the query using the SAME embedding model used for indexing
-           (CRITICAL: query and documents MUST use the same model,
-            otherwise the vector spaces don't align and similarity
-            scores become meaningless)
-        2. Send query vector to Qdrant
-        3. Qdrant computes cosine similarity between query vector
-           and ALL stored vectors using its HNSW index
+           (CRITICAL: query and documents MUST use the same model)
+        2. Build optional Qdrant filter from metadata params
+        3. Qdrant searches ONLY matching documents for similarity
         4. Returns the top-k most similar chunks as ScoredPoint objects
 
     WHAT IS HNSW?
@@ -96,22 +118,26 @@ def retrieve(query: str, top_k: int = TOP_K_RETRIEVAL) -> list[dict]:
         the closest vector requires comparing against ALL vectors (O(n)).
         HNSW builds a graph structure that finds approximate nearest
         neighbors in O(log n) time. The tradeoff: ~99% accuracy vs
-        100x faster search. Every production vector DB uses some form
-        of ANN (Approximate Nearest Neighbor) algorithm.
+        100x faster search. Every production vector DB uses this.
 
-    QDRANT'S query_points() vs search():
-        - query_points(): newer API, returns QueryResponse with .points
-        - search(): older API, returns list of ScoredPoint directly
-        We use query_points() as it's the recommended modern API.
+    INTERVIEW QUESTION:
+        "How do you handle filtered vector search?"
+        → "Qdrant supports payload-based filtering alongside HNSW
+           vector search. I can pass a Filter with FieldConditions
+           to restrict search to specific source types or companies.
+           This runs at the vector DB level, not in post-processing,
+           so it's efficient even with millions of documents."
 
     Args:
         query: The user's question
         top_k: Number of chunks to retrieve
+        source_type: Optional filter — only search this source type
+        company_name: Optional filter — only search this company
 
     Returns:
         List of dicts, each containing:
             - text: chunk text
-            - metadata: article info (title, URL, etc.)
+            - metadata: article info (title, URL, source_type, etc.)
             - score: similarity score (0-1, higher = more similar)
             - id: chunk identifier
     """
@@ -127,46 +153,53 @@ def retrieve(query: str, top_k: int = TOP_K_RETRIEVAL) -> list[dict]:
     # Connect to Qdrant (local mode — same path as indexing)
     client = QdrantClient(path=QDRANT_PATH)
 
+    # ── Build Qdrant filter (Stage 2) ──────────────────────
+    # Qdrant filters work at the DATABASE level, not in post-processing.
+    # This means:
+    #   1. Qdrant first narrows down to matching documents
+    #   2. THEN does vector search only within those documents
+    #   3. Much faster than retrieving everything and filtering after
+    #
+    # FieldCondition: matches exact values in payload fields
+    # Filter(must=[...]): ALL conditions must be true (AND logic)
+    # Filter(should=[...]): ANY condition can be true (OR logic)
+    query_filter = None
+    conditions = []
+    if source_type:
+        conditions.append(
+            FieldCondition(key="source_type", match=MatchValue(value=source_type))
+        )
+    if company_name:
+        conditions.append(
+            FieldCondition(key="company_name", match=MatchValue(value=company_name))
+        )
+    if conditions:
+        query_filter = Filter(must=conditions)
+
     # Query Qdrant for the top-k most similar chunks
-    # query_points() is Qdrant's modern search API
-    #
-    # WHAT HAPPENS UNDER THE HOOD:
-    #   1. Qdrant receives the query vector
-    #   2. It traverses the HNSW graph to find approximate nearest neighbors
-    #   3. For each candidate, it computes exact cosine similarity
-    #   4. Returns the top-k results sorted by score (highest first)
-    #
-    # SCORE INTERPRETATION (Cosine):
-    #   1.0 = identical vectors (same meaning)
-    #   0.7+ = highly relevant
-    #   0.5-0.7 = somewhat relevant
-    #   <0.5 = probably not relevant
     results = client.query_points(
         collection_name=QDRANT_COLLECTION_NAME,
         query=query_embedding,
         limit=top_k,
-        with_payload=True,  # Include the stored text + metadata
+        query_filter=query_filter,  # None = no filter (search all)
+        with_payload=True,
     )
 
     # Format results into a clean list of dicts
-    # Qdrant returns ScoredPoint objects — much cleaner than ChromaDB's
-    # parallel lists. Each point has: .id, .score, .payload, .version
+    # Dynamically extract metadata from payload (future-proof)
+    INTERNAL_FIELDS = {"text", "chunk_id"}  # Not metadata
     retrieved_chunks = []
     for point in results.points:
+        # Build metadata dict from all non-internal payload fields
+        metadata = {
+            k: v for k, v in point.payload.items()
+            if k not in INTERNAL_FIELDS
+        }
+
         retrieved_chunks.append({
             "id": point.payload.get("chunk_id", str(point.id)),
             "text": point.payload["text"],
-            "metadata": {
-                "article_id": point.payload.get("article_id", ""),
-                "title": point.payload.get("title", "Unknown"),
-                "url": point.payload.get("url", ""),
-                "chunk_index": point.payload.get("chunk_index", 0),
-                "total_chunks": point.payload.get("total_chunks", 0),
-                "token_count": point.payload.get("token_count", 0),
-            },
-            # Qdrant's .score is ALREADY a similarity score (0-1 for cosine)
-            # No conversion needed! ChromaDB returned "distance" which
-            # we had to convert via (1 - distance). Qdrant is cleaner.
+            "metadata": metadata,
             "score": point.score,
         })
 
@@ -183,6 +216,9 @@ def format_context(chunks: list[dict]) -> str:
         - Numbering chunks helps the LLM cite specific sources
         - Including source titles helps the LLM attribute information
 
+    STAGE 2 UPDATE:
+        Now shows company_name (if available) for better source display.
+
     Args:
         chunks: List of retrieved chunk dicts
 
@@ -191,11 +227,19 @@ def format_context(chunks: list[dict]) -> str:
     """
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
-        source = chunk["metadata"].get("title", "Unknown Source")
-        url = chunk["metadata"].get("url", "")
+        meta = chunk["metadata"]
+        # Use company_name if available (Stage 2), otherwise fall back to title
+        source = meta.get("company_name", meta.get("title", "Unknown Source"))
+        url = meta.get("url", "")
         score = chunk.get("score", 0)
+        source_type = meta.get("source_type", "")
+
+        header = f"[Source {i}] (Relevance: {score:.2f}) — {source}"
+        if source_type:
+            header += f" [{source_type}]"
+
         context_parts.append(
-            f"[Source {i}] (Relevance: {score:.2f}) — {source}\n"
+            f"{header}\n"
             f"URL: {url}\n"
             f"{chunk['text']}\n"
         )
